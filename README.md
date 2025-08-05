@@ -1,54 +1,42 @@
-# React + TypeScript + Vite
+# Reactron
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Authored and maintained by [annuraggg](https://github.com/annuraggg).
 
-Currently, two official plugins are available:
+## Overview
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+Reactron is an open-source Windows-like desktop environment clone built for the web with React. It emulates a classic desktop experience, running entirely in your browser, and includes a suite of interactive apps for productivity and fun.
 
-## Expanding the ESLint configuration
+## Features
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- **Multi-window desktop UI**: Drag, resize, and manage multiple app windows just like a classic operating system.
+- **Basic Browser**: Surf the web within the Reactron environment.
+- **File Explorer**: Browse and manage virtual files and folders.
+- **Media Support**: Play videos and view images directly in dedicated apps.
+- **Document Viewer**: Open and read common document formats.
+- **Notepad**: Edit and save text files.
+- **DOOM**: Play the legendary game DOOM inside Reactron (in a fun and humorous implementation), leveraging WebAssembly for efficient in-browser execution.
 
-```js
-export default tseslint.config({
-  extends: [
-    // Remove ...tseslint.configs.recommended and replace with this
-    ...tseslint.configs.recommendedTypeChecked,
-    // Alternatively, use this for stricter rules
-    ...tseslint.configs.strictTypeChecked,
-    // Optionally, add this for stylistic rules
-    ...tseslint.configs.stylisticTypeChecked,
-  ],
-  languageOptions: {
-    // other options...
-    parserOptions: {
-      project: ['./tsconfig.node.json', './tsconfig.app.json'],
-      tsconfigRootDir: import.meta.dirname,
-    },
-  },
-})
-```
+## Technical Details
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Reactron is built with modern React and TypeScript, utilizing a modular architecture for easy extension and maintenance. Each app is an isolated component, and the window manager ensures smooth multi-tasking and realistic desktop interactions.  
+Certain apps, such as DOOM, are powered by WebAssembly to provide native-like performance for demanding experiences directly in the browser.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Getting Started
 
-export default tseslint.config({
-  plugins: {
-    // Add the react-x and react-dom plugins
-    'react-x': reactX,
-    'react-dom': reactDom,
-  },
-  rules: {
-    // other rules...
-    // Enable its recommended typescript rules
-    ...reactX.configs['recommended-typescript'].rules,
-    ...reactDom.configs.recommended.rules,
-  },
-})
-```
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/annuraggg/Reactron.git
+   ```
+2. **Install dependencies**
+   ```bash
+   cd Reactron
+   npm install
+   ```
+3. **Start the development server**
+   ```bash
+   npm start
+   ```
+4. Visit `http://localhost:3000` in your browser to experience Reactron.
+
+
+Made with ❤️ by [annuraggg](https://github.com/annuraggg)
