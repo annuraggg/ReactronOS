@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { IconClipboardTextFilled, IconFolderFilled } from "@tabler/icons-react";
-import useWindowStore from "../../store/windowStore";
+import { Folder, NotebookText } from "lucide-react";
+import useWindowStore, { type Window } from "../../store/windowStore";
 import { createNotepadWindow } from "../../apps/Notepad/Notepad";
 import FileExplorer from "../../apps/FileExplorer/FileExplorer";
-import StartMenu, { type StartMenuApp } from "../StartMenu/StartMenu";
+import StartMenu from "../StartMenu/StartMenu";
+import { useAuthStore } from "../../store/authStore";
 
 const PINNED_APPS = [
   {
@@ -15,22 +16,21 @@ const PINNED_APPS = [
   {
     appType: "explorer",
     label: "Files",
-    icon: <IconFolderFilled color="#feca3c" />,
+    icon: <Folder className="w-5 h-5 text-amber-300" />,
     open: null,
   },
   {
     appType: "notepad",
     label: "Notepad",
-    icon: <IconClipboardTextFilled color="#5ac1df" />,
+    icon: <NotebookText className="w-5 h-5 text-cyan-300" />,
     open: null,
   },
 ];
 
-function getAppType(window: any): string {
+function getAppType(window: Window): string {
   if (window.appType) return window.appType;
   if (window.title.includes("Notepad")) return "notepad";
   if (window.title.includes("File Explorer")) return "explorer";
-
   return window.appType || window.title;
 }
 
@@ -43,6 +43,7 @@ const Dock = () => {
     left: number;
     top: number;
   } | null>(null);
+  const logout = useAuthStore((s) => s.logout);
 
   const handleNotepadClick = () => {
     const group = windows.filter((w) => getAppType(w) === "notepad");
@@ -63,7 +64,7 @@ const Dock = () => {
       id: `explorer-${Date.now()}`,
       title: "File Explorer",
       content: <FileExplorer />,
-      icon: <IconFolderFilled color="#feca3c" />,
+      icon: <Folder className="w-4 h-4 text-amber-300" />,
       width: 440,
       height: 520,
       x: 120 + Math.random() * 200,
@@ -77,29 +78,8 @@ const Dock = () => {
     });
   };
 
-  const appList: StartMenuApp[] = [
-    {
-      name: "File Explorer",
-      icon: <IconFolderFilled size={22} color="#feca3c" />,
-      action: () => {
-        setStartMenuOpen(false);
-        handleFileExplorerClick();
-      },
-    },
-    {
-      name: "Notepad",
-      icon: <IconClipboardTextFilled size={18} color="#5ac1df" />,
-      action: () => {
-        setStartMenuOpen(false);
-        handleNotepadClick();
-      },
-    },
-  ];
-
-  const runningAppGroups: Record<
-    string,
-    { windows: any[]; icon: ReactNode; label: string }
-  > = {};
+  const runningAppGroups: Record<string, { windows: Window[]; icon: ReactNode; label: string }> =
+    {};
   for (const win of windows) {
     const appType = getAppType(win);
     if (!runningAppGroups[appType]) {
@@ -122,7 +102,6 @@ const Dock = () => {
         windows: group?.windows || [],
       };
     }),
-
     ...Object.entries(runningAppGroups)
       .filter(([appType]) => !PINNED_APPS.some((p) => p.appType === appType))
       .map(([appType, group]) => ({
@@ -139,6 +118,7 @@ const Dock = () => {
     const rect = (e.target as HTMLElement).getBoundingClientRect();
     setHoverPos({ left: rect.left + rect.width / 2, top: rect.top });
   }
+
   function hideHoverMenu(appType: string) {
     setTimeout(() => {
       if (activePopup !== appType) {
@@ -174,10 +154,9 @@ const Dock = () => {
               : undefined;
 
           const isFocused =
-            app.windows &&
-            app.windows.some((w) => w.isFocused && !w.isMinimized);
-          const isMinimized =
-            app.windows && app.windows.every((w) => w.isMinimized);
+            app.windows && app.windows.some((w) => w.isFocused && !w.isMinimized);
+          const isMinimized = app.windows && app.windows.every((w) => w.isMinimized);
+
           return (
             <div
               key={app.appType}
@@ -201,16 +180,13 @@ const Dock = () => {
                 isFocused={isFocused}
                 isMinimized={isMinimized}
               />
-              {/* Hover popup for multiple windows */}
               {(hoveredApp === app.appType || activePopup === app.appType) &&
                 app.windows &&
                 app.windows.length > 1 &&
                 hoverPos && (
                   <div
                     className="absolute z-[99999] bottom-14 left-1/2 -translate-x-1/2 bg-zinc-900/95 border border-zinc-700 rounded-lg shadow-xl px-2 py-2 min-w-[180px] animate-fade-in"
-                    style={{
-                      pointerEvents: "auto",
-                    }}
+                    style={{ pointerEvents: "auto" }}
                     onMouseEnter={() => setActivePopup(app.appType)}
                     onMouseLeave={() => {
                       setActivePopup(null);
@@ -245,8 +221,8 @@ const Dock = () => {
       <StartMenu
         visible={startMenuOpen}
         onClose={() => setStartMenuOpen(false)}
-        appList={appList}
-        userName="annuraggg"
+        userName={useAuthStore.getState().currentUser ?? "User"}
+        onLogout={logout}
       />
     </div>
   );

@@ -1,19 +1,64 @@
+import { useMemo } from "react";
+import { File as FileIcon, Folder } from "lucide-react";
+import { useFileSystemStore } from "../../store/filesystemStore";
+import { useSettingsStore } from "../../store/settingsStore";
+import useWindowStore from "../../store/windowStore";
 import Dock from "./Dock";
+import { launchAppForFile } from "../../utils/launchAppForFile";
+import FileExplorer from "../../apps/FileExplorer/FileExplorer";
 
-const style = {
-  backgroundImage: "url(/wallpapers/default.jpg)",
-  backgroundSize: "cover",
-  height: "calc(100vh - 55px)",
-  zIndex: -20,
-};
+export default function Desktop() {
+  const wallpaper = useSettingsStore((state) => state.currentWallpaper);
+  const root = useFileSystemStore((state) => state.root);
+  const desktopNode = useMemo(
+    () => root.children?.find((child) => child.type === "folder" && child.name === "Desktop"),
+    [root]
+  );
+  const addWindow = useWindowStore((state) => state.addWindow);
 
-const Desktop = () => {
   return (
     <div className="flex flex-col">
-      <div style={style}></div>
+      <div
+        className="relative h-[calc(100vh-55px)] bg-cover bg-center bg-no-repeat px-3 py-3"
+        style={{ backgroundImage: `url(${wallpaper})`, zIndex: -20 }}
+      >
+        <div className="flex flex-col gap-2">
+          {desktopNode?.type === "folder" &&
+            desktopNode.children?.map((node) => (
+              <button
+                key={node.id}
+                type="button"
+                className="flex w-20 flex-col items-center gap-1 rounded p-1 text-zinc-100 hover:bg-black/25"
+                onDoubleClick={() => {
+                  if (node.type === "file") {
+                    launchAppForFile(node, addWindow, ["Desktop", node.name]);
+                    return;
+                  }
+                  addWindow({
+                    id: `explorer-desktop-${Date.now()}`,
+                    title: "File Explorer",
+                    content: <FileExplorer initialPath={["Desktop", node.name]} />,
+                    icon: <Folder className="h-4 w-4 text-amber-300" />,
+                    appType: "explorer",
+                    width: 440,
+                    height: 520,
+                    x: 120 + Math.random() * 200,
+                    y: 120 + Math.random() * 140,
+                    isFocused: true,
+                  });
+                }}
+              >
+                {node.type === "folder" ? (
+                  <Folder className="h-8 w-8 text-yellow-300" />
+                ) : (
+                  <FileIcon className="h-8 w-8 text-blue-300" />
+                )}
+                <span className="w-full truncate text-center text-[11px]">{node.name}</span>
+              </button>
+            ))}
+        </div>
+      </div>
       <Dock />
     </div>
   );
-};
-
-export default Desktop;
+}

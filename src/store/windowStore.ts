@@ -1,11 +1,17 @@
 import { create } from "zustand";
+import { saveSystemState, type PersistedWindow } from "../utils/persistence";
 
-type Window = {
+const TASKBAR_HEIGHT = 55;
+
+export type Window = {
   id: string;
   title: string;
   content: React.ReactNode;
   icon?: React.ReactNode;
   appType?: string;
+  appData?: Record<string, unknown>;
+  /** When true, the window is not persisted across sessions (e.g. welcome dialogs). */
+  isTransient?: boolean;
   width?: number;
   height?: number;
   x?: number;
@@ -41,9 +47,32 @@ type WindowStore = {
     id: string,
     size: { width: number; height: number }
   ) => void;
+  snapWindow: (
+    id: string,
+    side: "left" | "right"
+  ) => void;
   bringToFront: (id: string) => void;
   sendToBack: (id: string) => void;
+  resetForSession: () => void;
 };
+
+function serializeWindows(windows: Window[]): PersistedWindow[] {
+  return windows
+    .filter((w) => !w.isTransient && w.appType)
+    .map((w) => ({
+      id: w.id,
+      title: w.title,
+      appType: w.appType as string,
+      appData: w.appData,
+      width: w.width ?? 500,
+      height: w.height ?? 400,
+      x: w.x ?? 100,
+      y: w.y ?? 100,
+      zIndex: w.zIndex ?? 100,
+      isMaximized: w.isMaximized ?? false,
+      isMinimized: w.isMinimized ?? false,
+    }));
+}
 
 const useWindowStore = create<WindowStore>((set, get) => ({
   windows: [],
@@ -64,19 +93,22 @@ const useWindowStore = create<WindowStore>((set, get) => ({
       resizable: window.resizable ?? true,
     };
 
-    set((state) => ({
-      windows: [
+    set((state) => {
+      const updated = [
         ...state.windows.map((w) => ({ ...w, isFocused: false })),
         newWindow,
-      ],
-      nextZIndex: nextZIndex + 1,
-    }));
+      ];
+      saveSystemState({ windows: serializeWindows(updated) });
+      return { windows: updated, nextZIndex: nextZIndex + 1 };
+    });
   },
 
   removeWindow: (id) => {
-    set((state) => ({
-      windows: state.windows.filter((w) => w.id !== id),
-    }));
+    set((state) => {
+      const updated = state.windows.filter((w) => w.id !== id);
+      saveSystemState({ windows: serializeWindows(updated) });
+      return { windows: updated };
+    });
   },
 
   focusWindow: (id) => {
@@ -136,9 +168,11 @@ const useWindowStore = create<WindowStore>((set, get) => ({
   },
 
   closeWindow: (id) => {
-    set((state) => ({
-      windows: state.windows.filter((w) => w.id !== id),
-    }));
+    set((state) => {
+      const updated = state.windows.filter((w) => w.id !== id);
+      saveSystemState({ windows: serializeWindows(updated) });
+      return { windows: updated };
+    });
   },
 
   updateWindowPosition: (id, position) => {
@@ -154,6 +188,32 @@ const useWindowStore = create<WindowStore>((set, get) => ({
       windows: state.windows.map((w) =>
         w.id === id ? { ...w, width: size.width, height: size.height } : w
       ),
+    }));
+  },
+
+  snapWindow: (id, side) => {
+    const width = Math.floor(window.innerWidth / 2);
+    const height = window.innerHeight - TASKBAR_HEIGHT;
+    const x = side === "left" ? 0 : width;
+    const y = 0;
+    const { nextZIndex } = get();
+    set((state) => ({
+      windows: state.windows.map((w) =>
+        w.id === id
+          ? {
+              ...w,
+              x,
+              y,
+              width,
+              height,
+              isMaximized: false,
+              isMinimized: false,
+              isFocused: true,
+              zIndex: nextZIndex,
+            }
+          : { ...w, isFocused: false }
+      ),
+      nextZIndex: nextZIndex + 1,
     }));
   },
 
@@ -178,6 +238,10 @@ const useWindowStore = create<WindowStore>((set, get) => ({
         ),
       };
     });
+  },
+
+  resetForSession: () => {
+    set({ windows: [], nextZIndex: 100 });
   },
 }));
 

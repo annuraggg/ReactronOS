@@ -9,10 +9,14 @@ import ImageViewer from "../apps/ImageViewer/ImageViewer";
 import VideoPlayer from "../apps/VideoPlayer/VideoPlayer";
 import VsCode from "../apps/VSCode/VSCode";
 import VsCodeIcon from "../apps/VSCode/VSCodeIcon";
+import type { FileNode } from "../store/filesystemStore";
+import { notify } from "../store/notificationStore";
+import type { Window } from "../store/windowStore";
 
 export function launchAppForFile(
-  node: any,
-  addWindow: (win: any) => void,
+  node: FileNode,
+  addWindow: (win: Window) => void,
+  filePath?: string[],
   onClose?: () => void
 ) {
   if (node.type !== "file") return;
@@ -28,9 +32,15 @@ export function launchAppForFile(
         <Notepad
           initialContent={node.content || ""}
           initialFileName={node.name}
+          filePath={filePath}
         />
       ),
       icon: <IconClipboardTextFilled className="w-4 h-4" color="#5ac1df" />,
+      appType: "notepad",
+      appData: {
+        fileName: node.name,
+        filePath: filePath ?? null,
+      },
       width: 900,
       height: 500,
       x: 120 + Math.random() * 200,
@@ -50,6 +60,7 @@ export function launchAppForFile(
       id: windowId,
       title: node.name + " - Image Viewer",
       icon: <IconPhoto className="w-4 h-4" color="#a3e635" />,
+      appType: "imageviewer",
       width: 820,
       height: 650,
       x: 120 + Math.random() * 200,
@@ -76,6 +87,7 @@ export function launchAppForFile(
       id: windowId,
       title: node.name + " - Video Player",
       icon: <IconVideo className="w-4 h-4" color="#38bdf8" />,
+      appType: "videoplayer",
       width: 900,
       height: 600,
       x: 140 + Math.random() * 180,
@@ -107,6 +119,12 @@ export function launchAppForFile(
         />
       ),
       icon: <VsCodeIcon />,
+      appType: "vscode",
+      appData: {
+        fileName: node.name,
+        filePath: filePath ?? null,
+        initialValue: node.content || "",
+      },
       width: 900,
       height: 600,
       isFocused: true,
@@ -118,5 +136,5 @@ export function launchAppForFile(
     return;
   }
 
-  alert("No app registered for this file type.");
+  notify({ type: "error", message: "No app registered for this file type." });
 }

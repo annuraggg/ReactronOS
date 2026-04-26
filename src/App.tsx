@@ -3,14 +3,22 @@ import Desktop from "./components/Desktop/Desktop";
 import WindowManager from "./components/WindowManager/WindowManager";
 import useWindowStore from "./store/windowStore";
 import { motion, AnimatePresence } from "framer-motion";
+import { loadSystemState } from "./utils/persistence";
+import { createWindowFromPersisted } from "./utils/windowFactory";
+import CommandPalette from "./components/CommandPalette/CommandPalette";
+import AuthScreen from "./components/Auth/AuthScreen";
+import { useAuthStore } from "./store/authStore";
+import { useFileSystemStore } from "./store/filesystemStore";
+import { useSettingsStore } from "./store/settingsStore";
+import NotificationCenter from "./components/System/NotificationCenter";
 
-const BOOT_MIN_DURATION = 7000;
+const BOOT_MIN_DURATION = 1500; // Keep boot animation visible long enough to avoid visual flashing.
 
 const BootScreen = () => (
   <motion.div
     initial={{ opacity: 1 }}
     animate={{ opacity: 1 }}
-    exit={{ opacity: 0, transition: { duration: 0.8 } }}
+    exit={{ opacity: 0, transition: { duration: 0.4 } }}
     className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-[#111827]"
     style={{
       background:
@@ -36,7 +44,7 @@ const BootScreen = () => (
           delay: 0.15,
         },
       }}
-      exit={{ opacity: 0, scale: 1.1, y: -40, transition: { duration: 0.5 } }}
+      exit={{ opacity: 0, scale: 1.1, y: -40, transition: { duration: 0.35 } }}
       draggable={false}
     />
 
@@ -45,97 +53,23 @@ const BootScreen = () => (
       animate={{
         opacity: 1,
         y: 0,
-        transition: { delay: 0.6, duration: 0.65 },
+        transition: { delay: 0.3, duration: 0.45 },
       }}
-      exit={{ opacity: 0, y: 30, transition: { duration: 0.3 } }}
+      exit={{ opacity: 0, y: 30, transition: { duration: 0.2 } }}
       className="text-2xl font-semibold text-white/90 tracking-wide select-none"
       style={{ textShadow: "0 2px 24px #000b" }}
     >
       Starting ReactronOS
     </motion.div>
-
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{
-        opacity: 1,
-        y: 0,
-        transition: { delay: 1.25, duration: 0.5 },
-      }}
-      exit={{ opacity: 0 }}
-      className="flex gap-1 mt-12"
-    >
-      {[0, 1, 2, 3].map((i) => (
-        <motion.div
-          key={i}
-          className="w-2.5 h-2.5 rounded-full bg-white/70"
-          animate={{
-            opacity: [0.3, 1, 0.3],
-            y: [0, -7, 0],
-          }}
-          transition={{
-            repeat: Infinity,
-            repeatType: "loop",
-            duration: 1.2,
-            delay: i * 0.18,
-          }}
-        />
-      ))}
-    </motion.div>
   </motion.div>
 );
 
-type FullscreenPromptProps = {
-  onAccept: () => void;
-  onDecline: () => void;
-};
-
-const FullscreenPrompt = ({ onAccept, onDecline }: FullscreenPromptProps) => (
-  <div
-    className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black/90 backdrop-opacity-10"
-    style={{ backdropFilter: "blur(3px)" }}
-  >
-    <div className="bg-black/70 text-white rounded-lg p-8 shadow-lg flex flex-col items-center">
-      <img src="/logo.png" alt="Logo" width={56} height={56} className="mb-4" />
-      <h2 className="text-xl font-semibold mb-2 text-white">
-        Go Fullscreen?
-      </h2>
-      <p className="text-gray-300 mb-6 text-center">
-        For the best experience, would you like to switch to fullscreen mode?
-      </p>
-      <div className="flex gap-4">
-        <button
-          onClick={onAccept}
-          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
-        >
-          Yes, go fullscreen
-        </button>
-        <button
-          onClick={onDecline}
-          className="px-4 py-2 bg-gray-300 text-gray-800 rounded hover:bg-gray-400 transition"
-        >
-          No, continue
-        </button>
-      </div>
-    </div>
-  </div>
-);
-
-const requestFullscreen = () => {
-  const el = document.documentElement as HTMLElement & {
-    webkitRequestFullscreen?: () => Promise<void>;
-    mozRequestFullScreen?: () => Promise<void>;
-    msRequestFullscreen?: () => Promise<void>;
-  };
-  if (el.requestFullscreen) el.requestFullscreen();
-  else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
-  else if (el.mozRequestFullScreen) el.mozRequestFullScreen();
-  else if (el.msRequestFullscreen) el.msRequestFullscreen();
-};
-
 const App = () => {
   const [booting, setBooting] = useState(true);
-  const [bootStartTime] = useState(Date.now());
-  const [showFullscreenPrompt, setShowFullscreenPrompt] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const currentUser = useAuthStore((state) => state.currentUser);
+  const loadFsForCurrentUser = useFileSystemStore((state) => state.loadForCurrentUser);
+  const loadSettingsForCurrentUser = useSettingsStore((state) => state.loadForCurrentUser);
   const windows = useWindowStore((state) => state.windows);
   const {
     addWindow,
@@ -145,6 +79,8 @@ const App = () => {
     closeWindow,
     updateWindowPosition,
     updateWindowSize,
+    snapWindow,
+    resetForSession,
   } = useWindowStore();
 
   const waitForAllAssets = () =>
@@ -153,85 +89,137 @@ const App = () => {
         resolve();
       } else {
         window.addEventListener("load", () => {
-          setTimeout(() => resolve(), 300);
+          setTimeout(() => resolve(), 150);
         });
       }
     });
 
   useEffect(() => {
+    let cancelled = false;
+
     const doBoot = async () => {
+      if (!currentUser) {
+        setBooting(false);
+        resetForSession();
+        return;
+      }
+
+      resetForSession();
+      loadFsForCurrentUser();
+      loadSettingsForCurrentUser();
+      setBooting(true);
+
+      const bootStartTime = Date.now();
       const minBootTime = new Promise((r) =>
-        setTimeout(r, BOOT_MIN_DURATION - (Date.now() - bootStartTime))
+        setTimeout(r, BOOT_MIN_DURATION - Math.max(0, Date.now() - bootStartTime))
       );
       const assetLoad = waitForAllAssets();
       await Promise.all([minBootTime, assetLoad]);
-      addWindow({
-        id: "welcome",
-        title: "Welcome",
-        content: (
-          <div style={{ padding: 32, fontSize: 22 }}>Welcome to Reactron!</div>
-        ),
-        icon: null,
-        x: 200,
-        y: 140,
-      });
-      setBooting(false);
-      setShowFullscreenPrompt(true);
+      if (cancelled) return;
+
+      const { windows: persistedWindows } = loadSystemState(currentUser);
+      if (persistedWindows && persistedWindows.length > 0) {
+        for (const pw of persistedWindows) {
+          const result = createWindowFromPersisted(pw);
+          if (result) {
+            addWindow({
+              id: pw.id,
+              title: pw.title,
+              appType: pw.appType,
+              appData: pw.appData,
+              content: result.content,
+              icon: result.icon,
+              width: pw.width,
+              height: pw.height,
+              x: pw.x,
+              y: pw.y,
+              zIndex: pw.zIndex,
+              isMaximized: pw.isMaximized,
+              isMinimized: pw.isMinimized,
+              isFocused: false,
+              resizable: true,
+            });
+          }
+        }
+      } else {
+        addWindow({
+          id: "welcome",
+          title: "Welcome",
+          content: (
+            <div style={{ padding: 32, fontSize: 22 }}>
+              Welcome to Reactron, {currentUser}!
+            </div>
+          ),
+          icon: null,
+          isTransient: true,
+          x: 200,
+          y: 140,
+        });
+      }
+
+      if (!cancelled) {
+        setBooting(false);
+      }
     };
-    doBoot();
-  }, [addWindow, bootStartTime]);
 
-  const handleFullscreenAccept = () => {
-    requestFullscreen();
-    setShowFullscreenPrompt(false);
-  };
+    void doBoot();
 
-  const handleFullscreenDecline = () => {
-    setShowFullscreenPrompt(false);
-  };
+    return () => {
+      cancelled = true;
+    };
+  }, [addWindow, currentUser, loadFsForCurrentUser, loadSettingsForCurrentUser, resetForSession]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+        e.preventDefault();
+        setCommandPaletteOpen((v) => !v);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
+  if (!currentUser) {
+    return <AuthScreen />;
+  }
 
   return (
     <div>
       <AnimatePresence>{booting && <BootScreen key="boot" />}</AnimatePresence>
       {!booting && (
         <>
-          {showFullscreenPrompt && (
-            <FullscreenPrompt
-              onAccept={handleFullscreenAccept}
-              onDecline={handleFullscreenDecline}
-            />
-          )}
-          {!showFullscreenPrompt && (
-            <>
-              <Desktop />
-              {windows.map((window) => (
-                <WindowManager
-                  key={window.id}
-                  title={window.title}
-                  icon={window.icon}
-                  isFocused={window.isFocused || false}
-                  isMaximized={window.isMaximized || false}
-                  isMinimized={window.isMinimized || false}
-                  zIndex={window.zIndex || 1}
-                  position={{ x: window.x || 100, y: window.y || 100 }}
-                  size={{
-                    width: window.width || 500,
-                    height: window.height || 400,
-                  }}
-                  onFocus={() => focusWindow(window.id)}
-                  onMaximize={() => maximizeWindow(window.id)}
-                  onMinimize={() => minimizeWindow(window.id)}
-                  onClose={() => closeWindow(window.id)}
-                  onPositionChange={(position) =>
-                    updateWindowPosition(window.id, position)
-                  }
-                  onSizeChange={(size) => updateWindowSize(window.id, size)}
-                >
-                  {window.content}
-                </WindowManager>
-              ))}
-            </>
-          )}
+          <Desktop />
+          {windows.map((window) => (
+            <WindowManager
+              key={window.id}
+              title={window.title}
+              icon={window.icon}
+              isFocused={window.isFocused || false}
+              isMaximized={window.isMaximized || false}
+              isMinimized={window.isMinimized || false}
+              zIndex={window.zIndex || 1}
+              position={{ x: window.x || 100, y: window.y || 100 }}
+              size={{
+                width: window.width || 500,
+                height: window.height || 400,
+              }}
+              onFocus={() => focusWindow(window.id)}
+              onMaximize={() => maximizeWindow(window.id)}
+              onMinimize={() => minimizeWindow(window.id)}
+              onClose={() => closeWindow(window.id)}
+              onPositionChange={(position) => updateWindowPosition(window.id, position)}
+              onSizeChange={(size) => updateWindowSize(window.id, size)}
+              onSnap={(side) => snapWindow(window.id, side)}
+            >
+              {window.content}
+            </WindowManager>
+          ))}
+          <CommandPalette
+            open={commandPaletteOpen}
+            onClose={() => setCommandPaletteOpen(false)}
+          />
+          <NotificationCenter />
         </>
       )}
     </div>

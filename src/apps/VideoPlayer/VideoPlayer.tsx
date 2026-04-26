@@ -26,10 +26,9 @@ export default function VideoPlayer({
   const [muted, setMuted] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
-  const [seeking, setSeeking] = useState(false);
 
   useEffect(() => {
-    let timeout: any;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     if (showControls && playing) {
       timeout = setTimeout(() => setShowControls(false), 2200);
     }
@@ -42,7 +41,11 @@ export default function VideoPlayer({
       if (document.activeElement !== containerRef.current) return;
       if (e.code === "Space") {
         e.preventDefault();
-        playing ? videoRef.current?.pause() : videoRef.current?.play();
+        if (playing) {
+          videoRef.current?.pause();
+        } else {
+          videoRef.current?.play();
+        }
       } else if (e.code === "ArrowRight") {
         videoRef.current!.currentTime = Math.min(
           (videoRef.current?.currentTime || 0) + 5,
@@ -54,29 +57,25 @@ export default function VideoPlayer({
           0
         );
       } else if (e.key === "f" || e.key === "F") {
-        toggleFullscreen();
+        if (!containerRef.current) return;
+        if (!fullscreen) {
+          if (containerRef.current.requestFullscreen) {
+            void containerRef.current.requestFullscreen();
+          }
+          setFullscreen(true);
+        } else {
+          if (document.exitFullscreen) {
+            void document.exitFullscreen();
+          }
+          setFullscreen(false);
+        }
       } else if (e.key === "m" || e.key === "M") {
         setMuted((m) => !m);
       }
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [playing, duration]);
-
-  useEffect(() => {
-    // Start maximized (fullscreen)
-    if (containerRef.current && !fullscreen) {
-      if (containerRef.current.requestFullscreen) {
-        containerRef.current.requestFullscreen();
-        setFullscreen(true);
-      }
-    }
-    // Optionally, auto play
-    if (videoRef.current) {
-      videoRef.current.play();
-    }
-    // eslint-disable-next-line
-  }, []);
+  }, [playing, duration, fullscreen]);
 
   function toggleFullscreen() {
     if (!containerRef.current) return;
@@ -93,7 +92,7 @@ export default function VideoPlayer({
   function handleProgressChange(e: React.ChangeEvent<HTMLInputElement>) {
     const time = parseFloat(e.target.value);
     setCurrent(time);
-    setSeeking(true);
+    if (videoRef.current) videoRef.current.currentTime = time;
   }
   //   function handleProgressCommit(e: React.ChangeEvent<HTMLInputElement>) {
   //     const time = parseFloat(e.target.value);
@@ -201,7 +200,7 @@ export default function VideoPlayer({
               type="range"
               min={0}
               max={duration || 1}
-              value={seeking ? current : videoRef.current?.currentTime || 0}
+              value={current}
               step={0.1}
               onChange={handleProgressChange}
               //   onMouseUp={handleProgressCommit}

@@ -23,6 +23,7 @@ type WindowManagerProps = {
   onClose?: () => void;
   onPositionChange?: (position: { x: number; y: number }) => void;
   onSizeChange?: (size: { width: number; height: number }) => void;
+  onSnap?: (side: "left" | "right") => void;
 
   position?: { x: number; y: number };
   size?: { width: number; height: number };
@@ -46,6 +47,7 @@ const WindowManager: React.FC<WindowManagerProps> = ({
   onClose,
   onPositionChange,
   onSizeChange,
+  onSnap,
   position,
   size,
   defaultPosition = { x: 100, y: 100 },
@@ -57,6 +59,7 @@ const WindowManager: React.FC<WindowManagerProps> = ({
   const [internalSize, setInternalSize] = useState(size || defaultSize);
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [lastPointerX, setLastPointerX] = useState<number | null>(null);
 
   const currentPosition = position || internalPosition;
   const currentSize = size || internalSize;
@@ -104,6 +107,7 @@ const WindowManager: React.FC<WindowManagerProps> = ({
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isDragging) return;
+      setLastPointerX(e.clientX);
       const newX = e.clientX - dragOffset.x;
       const newY = e.clientY - dragOffset.y;
       const maxX = window.innerWidth - currentSize.width;
@@ -115,7 +119,14 @@ const WindowManager: React.FC<WindowManagerProps> = ({
       if (onPositionChange) onPositionChange(constrainedPosition);
       else setInternalPosition(constrainedPosition);
     };
-    const handleMouseUp = () => setIsDragging(false);
+    const handleMouseUp = () => {
+      if (onSnap && lastPointerX !== null) {
+        if (lastPointerX < 28) onSnap("left");
+        if (lastPointerX > window.innerWidth - 28) onSnap("right");
+      }
+      setLastPointerX(null);
+      setIsDragging(false);
+    };
     if (isDragging) {
       document.addEventListener("mousemove", handleMouseMove);
       document.addEventListener("mouseup", handleMouseUp);
@@ -124,18 +135,28 @@ const WindowManager: React.FC<WindowManagerProps> = ({
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [isDragging, dragOffset, currentSize, onPositionChange]);
+  }, [isDragging, dragOffset, currentSize, onPositionChange, onSnap, lastPointerX]);
 
   const minimizedY = window.innerHeight - MINIMIZED_HEIGHT - 20;
 
+  type VariantCustom = {
+    isMaximized: boolean;
+    normal: {
+      top: number;
+      left: number;
+      width: number;
+      height: number;
+    };
+  };
+
   const variants = {
-    initial: (custom: any) => ({
+    initial: (custom: VariantCustom) => ({
       opacity: 0,
       scale: 0.97,
       y: 40,
       ...custom.normal,
     }),
-    animate: (custom: any) =>
+    animate: (custom: VariantCustom) =>
       custom.isMaximized
         ? {
             opacity: 1,
@@ -219,6 +240,7 @@ const WindowManager: React.FC<WindowManagerProps> = ({
         custom={custom}
         transition={{ layout: { duration: 0.32, type: "spring" } }}
         onClick={handleFocus}
+        onMouseDown={(e) => e.stopPropagation()}
         layout
         drag={false}
       >

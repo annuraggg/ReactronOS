@@ -1,84 +1,68 @@
-import React, { useState, useEffect } from "react";
-import { useFileSystemStore, type FileNode } from "../../store/filesystemStore";
+import { type MouseEvent, useEffect, useMemo, useState } from "react";
 import {
-  IconFolderFilled,
-  IconFile,
-  IconChevronLeft,
-  IconChevronRight,
-  IconHome,
-  IconRefresh,
-  IconGridDots,
-  IconPlus,
-} from "@tabler/icons-react";
+  ChevronLeft,
+  ChevronRight,
+  File as FileIcon,
+  FilePlus2,
+  Folder,
+  FolderPlus,
+  Home,
+  Pencil,
+  RefreshCw,
+  Trash2,
+  X,
+  Save,
+} from "lucide-react";
 import { launchAppForFile } from "../../utils/launchAppForFile";
 import useWindowStore from "../../store/windowStore";
+import { useFileSystemStore, type FileNode } from "../../store/filesystemStore";
+import PromptDialog from "../../components/System/PromptDialog";
+import ConfirmDialog from "../../components/System/ConfirmDialog";
+import { notify } from "../../store/notificationStore";
 
-function getPathCrumbs(currentPath: string[]) {
-  const pathCrumbs: { name: string; path: string[] }[] = [
-    { name: "This PC", path: [] },
-  ];
+function getPathCrumbs(path: string[]) {
+  const crumbs: { name: string; path: string[] }[] = [{ name: "This PC", path: [] }];
   let acc: string[] = [];
-  for (const segment of currentPath) {
+  for (const segment of path) {
     acc = [...acc, segment];
-    pathCrumbs.push({ name: segment, path: [...acc] });
+    crumbs.push({ name: segment, path: [...acc] });
   }
-  return pathCrumbs;
+  return crumbs;
 }
 
-type HistoryStack = {
-  stack: string[][];
-  pointer: number;
+type HistoryStack = { stack: string[][]; pointer: number };
+type FileExplorerMode = "manage" | "save";
+
+type FileExplorerProps = {
+  mode?: FileExplorerMode;
+  initialPath?: string[];
+  suggestedFileName?: string;
+  onSave?: (path: string[], fileName: string) => void;
+  onCancel?: () => void;
 };
 
-export default function FileExplorer() {
-  const {
-    root,
-    currentPath,
-    setCurrentPath,
-    getNodeByPath,
-    createFile,
-    createFolder,
-    renameNode,
-    deleteNode,
-  } = useFileSystemStore();
-  const addWindow = useWindowStore((s) => s.addWindow);
+type RenameState = { open: boolean; path: string[] | null; currentName: string };
+type DeleteState = { open: boolean; path: string[] | null; targetName: string };
+const DEFAULT_SAVE_PATH = ["Documents"];
 
+export default function FileExplorer({
+  mode = "manage",
+  initialPath,
+  suggestedFileName = "Untitled.txt",
+  onSave,
+  onCancel,
+}: FileExplorerProps) {
+  const { root, currentPath, setCurrentPath, getNodeByPath, createFile, createFolder, renameNode, deleteNode } =
+    useFileSystemStore();
+  const addWindow = useWindowStore((state) => state.addWindow);
+
+  const defaultSavePath = initialPath && initialPath.length > 0 ? initialPath : DEFAULT_SAVE_PATH;
+  const [localPath, setLocalPath] = useState<string[]>(defaultSavePath);
+  const [saveFileName, setSaveFileName] = useState(suggestedFileName);
   const [history, setHistory] = useState<HistoryStack>({
-    stack: [currentPath],
+    stack: [mode === "save" ? defaultSavePath : currentPath],
     pointer: 0,
   });
-
-  useEffect(() => {
-    setHistory((hist) => {
-      if (
-        hist.stack[hist.pointer] &&
-        JSON.stringify(hist.stack[hist.pointer]) === JSON.stringify(currentPath)
-      )
-        return hist;
-      const newStack = hist.stack.slice(0, hist.pointer + 1);
-      newStack.push([...currentPath]);
-      return { stack: newStack, pointer: newStack.length - 1 };
-    });
-  }, [currentPath]);
-
-  const sidebarFolders = [
-    { label: "Home", icon: <IconHome size={17} />, path: [] },
-    {
-      label: "Documents",
-      icon: <IconFolderFilled size={17} />,
-      path: ["Documents"],
-    },
-    ...((root.children || [])
-      .filter((n) => n.type === "folder" && n.name !== "Documents")
-      .map((folder) => ({
-        label: folder.name,
-        icon: <IconFolderFilled size={17} />,
-        path: [folder.name],
-      })) || []),
-  ];
-
-  const currentNode = getNodeByPath(currentPath) || root;
-  const pathCrumbs = getPathCrumbs(currentPath);
 
   const [contextMenu, setContextMenu] = useState<{
     visible: boolean;
@@ -86,272 +70,380 @@ export default function FileExplorer() {
     y: number;
     node: FileNode | null;
     path: string[] | null;
-  }>({
-    visible: false,
-    x: 0,
-    y: 0,
-    node: null,
+  }>({ visible: false, x: 0, y: 0, node: null, path: null });
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFileOpen, setNewFileOpen] = useState(false);
+  const [renameState, setRenameState] = useState<RenameState>({
+    open: false,
     path: null,
+    currentName: "",
+  });
+  const [deleteState, setDeleteState] = useState<DeleteState>({
+    open: false,
+    path: null,
+    targetName: "",
   });
 
+  const activePath = mode === "save" ? localPath : currentPath;
+  const setActivePath = mode === "save" ? setLocalPath : setCurrentPath;
+
+  const pathKey = useMemo(() => JSON.stringify(initialPath ?? []), [initialPath]);
+
   useEffect(() => {
-    const handler = () => setContextMenu((c) => ({ ...c, visible: false }));
-    window.addEventListener("click", handler);
-    window.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") handler();
+    if (mode === "save") {
+      setLocalPath(defaultSavePath);
+      setHistory({ stack: [defaultSavePath], pointer: 0 });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, pathKey]);
+
+  useEffect(() => {
+    setHistory((prev) => {
+      const current = prev.stack[prev.pointer];
+      if (current && JSON.stringify(current) === JSON.stringify(activePath)) return prev;
+      const nextStack = prev.stack.slice(0, prev.pointer + 1);
+      nextStack.push([...activePath]);
+      return { stack: nextStack, pointer: nextStack.length - 1 };
     });
+  }, [activePath]);
+
+  useEffect(() => {
+    const closeMenu = () => setContextMenu((state) => ({ ...state, visible: false }));
+    const onEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeMenu();
+    };
+    window.addEventListener("click", closeMenu);
+    window.addEventListener("keydown", onEscape);
     return () => {
-      window.removeEventListener("click", handler);
-      window.removeEventListener("keydown", handler as any);
+      window.removeEventListener("click", closeMenu);
+      window.removeEventListener("keydown", onEscape);
     };
   }, []);
 
-  function handleRefresh() {
-    setCurrentPath([...currentPath]);
-  }
+  useEffect(() => setSaveFileName(suggestedFileName), [suggestedFileName]);
 
-  function handleNodeOpen(node: FileNode, path: string[]) {
-    if (node.type === "folder") setCurrentPath(path);
-    else launchAppForFile(node, addWindow);
-  }
+  const currentNode = getNodeByPath(activePath) || root;
+  const crumbs = getPathCrumbs(activePath);
+
+  const sidebarFolders = [
+    { label: "Home", icon: <Home size={16} />, path: [] },
+    { label: "Desktop", icon: <Folder size={16} />, path: ["Desktop"] },
+    { label: "Documents", icon: <Folder size={16} />, path: ["Documents"] },
+    { label: "Music", icon: <Folder size={16} />, path: ["Music"] },
+    { label: "Images", icon: <Folder size={16} />, path: ["Images"] },
+    { label: "Videos", icon: <Folder size={16} />, path: ["Videos"] },
+  ];
+
+  const openNode = (node: FileNode, path: string[]) => {
+    if (mode === "save") {
+      if (node.type === "folder") setActivePath(path);
+      else setSaveFileName(node.name);
+      return;
+    }
+    if (node.type === "folder") setActivePath(path);
+    else launchAppForFile(node, addWindow, path);
+  };
+
+  const handleSaveClick = () => {
+    const fileName = saveFileName.trim();
+    if (!fileName || !onSave) return;
+    onSave(activePath, fileName);
+  };
 
   return (
-    <div
-      id="file-explorer-root"
-      className="flex flex-col w-full h-full min-w-[340px] min-h-[300px] max-h-full bg-gradient-to-tr from-[#20232a] via-[#1b1e23] to-[#171821] text-zinc-100 shadow-[0_4px_32px_0_rgba(0,0,40,0.25)] border border-zinc-800 overflow-hidden select-none"
-      tabIndex={0}
-      style={{
-        borderRadius: 0,
-        boxSizing: "border-box",
-        boxShadow: "0 2px 32px 0 #0006, 0 1.5px 0px 0 #3339 inset",
-        backdropFilter: "blur(8px)",
-        border: "1px solid #23272f",
-      }}
-    >
-      {/* Toolbar */}
-      <div className="flex items-center gap-1 px-2 py-1.5 bg-gradient-to-r from-[#23272f] to-[#191b21] border-b border-zinc-800 shadow">
-        <button
-          className={`hover:bg-blue-700/40 p-1 rounded transition ${
-            history.pointer <= 0 ? "opacity-40 pointer-events-none" : ""
-          }`}
-          onClick={() => {
-            if (history.pointer > 0) {
-              setCurrentPath(history.stack[history.pointer - 1]);
-              setHistory((h) => ({ ...h, pointer: h.pointer - 1 }));
-            }
-          }}
-          tabIndex={-1}
-          aria-label="Back"
-        >
-          <IconChevronLeft size={18} />
-        </button>
-        <button
-          className={`hover:bg-blue-700/40 p-1 rounded transition ${
-            history.pointer >= history.stack.length - 1
-              ? "opacity-40 pointer-events-none"
-              : ""
-          }`}
-          onClick={() => {
-            if (history.pointer < history.stack.length - 1) {
-              setCurrentPath(history.stack[history.pointer + 1]);
-              setHistory((h) => ({ ...h, pointer: h.pointer + 1 }));
-            }
-          }}
-          tabIndex={-1}
-          aria-label="Forward"
-        >
-          <IconChevronRight size={18} />
-        </button>
-        <button
-          className="hover:bg-blue-700/40 p-1 rounded transition"
-          onClick={() => setCurrentPath([])}
-          tabIndex={-1}
-          aria-label="Home"
-        >
-          <IconHome size={18} />
-        </button>
-        <button
-          className="hover:bg-blue-700/40 p-1 rounded ml-1 transition"
-          onClick={handleRefresh}
-          tabIndex={-1}
-          aria-label="Refresh"
-        >
-          <IconRefresh size={18} />
-        </button>
-        {/* Address Bar */}
-        <div className="flex-1 mx-2">
-          <div className="flex items-center bg-[#212327] border border-zinc-800 px-2 py-[5px] rounded gap-1 text-xs overflow-x-auto shadow-inner">
-            {pathCrumbs.map((crumb, idx) => (
-              <span key={crumb.name + idx} className="flex items-center gap-1">
-                {idx > 0 && (
-                  <IconChevronRight size={13} className="opacity-60" />
-                )}
-                <button
-                  className="px-1 rounded hover:bg-blue-800/30 transition"
-                  onClick={() => setCurrentPath(crumb.path)}
-                  tabIndex={-1}
-                  style={{
-                    fontWeight: idx === pathCrumbs.length - 1 ? 700 : 400,
-                    color: idx === pathCrumbs.length - 1 ? "#fff" : "#60a5fa",
-                  }}
-                >
-                  {crumb.name}
-                </button>
-              </span>
-            ))}
-          </div>
-        </div>
-        <button
-          className="hover:bg-blue-700/40 p-1 rounded transition"
-          onClick={() => {
-            const name = prompt("Folder name?");
-            if (name) createFolder(currentPath, name);
-          }}
-          tabIndex={-1}
-        >
-          <IconPlus size={15} />
-        </button>
-        <button
-          className="hover:bg-blue-700/40 p-1 rounded transition"
-          onClick={() => {
-            const name = prompt("File name?");
-            if (name) createFile(currentPath, name, "");
-          }}
-          tabIndex={-1}
-        >
-          <IconGridDots size={15} />
-        </button>
-      </div>
-
-      {/* Main content: sidebar and file view */}
-      <div className="flex flex-1 min-h-0 h-0">
-        {/* Sidebar */}
-        <div className="w-40 min-w-[90px] bg-gradient-to-b from-[#1a1d22] to-[#18191d] border-r border-zinc-800 py-2 flex flex-col gap-1 shadow-xl">
-          {sidebarFolders.map((item) => (
-            <button
-              key={item.label}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-[15px] font-semibold text-zinc-200 hover:bg-blue-800/25 transition
-              ${
-                JSON.stringify(currentPath) === JSON.stringify(item.path)
-                  ? "bg-blue-700/40 text-blue-100 shadow"
-                  : ""
+    <>
+      <div
+        id="file-explorer-root"
+        className="flex h-full min-h-[300px] min-w-[340px] w-full flex-col overflow-hidden border border-zinc-800 bg-gradient-to-tr from-[#20232a] via-[#1b1e23] to-[#171821] text-zinc-100"
+        tabIndex={0}
+      >
+        <div className="flex items-center gap-1 border-b border-zinc-800 bg-gradient-to-r from-[#23272f] to-[#191b21] px-2 py-1.5">
+          <button
+            className={`rounded p-1 transition hover:bg-blue-700/40 ${history.pointer <= 0 ? "pointer-events-none opacity-40" : ""}`}
+            onClick={() => {
+              if (history.pointer > 0) {
+                setActivePath(history.stack[history.pointer - 1]);
+                setHistory((prev) => ({ ...prev, pointer: prev.pointer - 1 }));
               }
-              `}
-              onClick={() => setCurrentPath(item.path)}
-              tabIndex={-1}
-              style={{ minHeight: 32, maxHeight: 32 }}
-            >
-              {item.icon}
-              {item.label}
-            </button>
-          ))}
-        </div>
-        {/* File/folder list (FLEX, not grid!) */}
-        <div className="flex-1 bg-gradient-to-br from-[#1b1d22] to-[#171821] p-3 overflow-auto relative">
-          {currentNode.type === "folder" &&
-            currentNode.children &&
-            currentNode.children.length === 0 && (
-              <div className="text-zinc-500 text-center mt-16 text-base">
-                This folder is empty.
-              </div>
-            )}
-          <div className="flex flex-wrap gap-2">
-            {currentNode.type === "folder" &&
-              currentNode.children?.map((node) => (
-                <Win11SquareNode
-                  key={node.id}
-                  node={node}
-                  onOpen={() =>
-                    handleNodeOpen(node, [...currentPath, node.name])
-                  }
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setContextMenu({
-                      visible: true,
-                      x: e.clientX,
-                      y: e.clientY,
-                      node,
-                      path: [...currentPath, node.name],
-                    });
-                  }}
-                />
+            }}
+            aria-label="Back"
+          >
+            <ChevronLeft size={17} />
+          </button>
+          <button
+            className={`rounded p-1 transition hover:bg-blue-700/40 ${
+              history.pointer >= history.stack.length - 1 ? "pointer-events-none opacity-40" : ""
+            }`}
+            onClick={() => {
+              if (history.pointer < history.stack.length - 1) {
+                setActivePath(history.stack[history.pointer + 1]);
+                setHistory((prev) => ({ ...prev, pointer: prev.pointer + 1 }));
+              }
+            }}
+            aria-label="Forward"
+          >
+            <ChevronRight size={17} />
+          </button>
+          <button
+            className="rounded p-1 transition hover:bg-blue-700/40"
+            onClick={() => setActivePath([])}
+            aria-label="Home"
+          >
+            <Home size={17} />
+          </button>
+          <button
+            className="ml-1 rounded p-1 transition hover:bg-blue-700/40"
+            onClick={() => setActivePath([...activePath])}
+            aria-label="Refresh"
+          >
+            <RefreshCw size={17} />
+          </button>
+
+          <div className="mx-2 flex-1">
+            <div className="flex items-center gap-1 overflow-x-auto rounded border border-zinc-800 bg-[#212327] px-2 py-[5px] text-xs">
+              {crumbs.map((crumb, idx) => (
+                <span key={`${crumb.name}-${idx}`} className="flex items-center gap-1">
+                  {idx > 0 && <ChevronRight size={12} className="opacity-60" />}
+                  <button
+                    className="rounded px-1 transition hover:bg-blue-800/30"
+                    onClick={() => setActivePath(crumb.path)}
+                    style={{
+                      fontWeight: idx === crumbs.length - 1 ? 700 : 400,
+                      color: idx === crumbs.length - 1 ? "#fff" : "#60a5fa",
+                    }}
+                  >
+                    {crumb.name}
+                  </button>
+                </span>
               ))}
-          </div>
-          {/* Context Menu */}
-          {contextMenu.visible && contextMenu.node && contextMenu.path && (
-            <div
-              className="fixed z-50 bg-[#23242a] border border-zinc-700 rounded shadow-lg py-1 min-w-[120px] animate-fade-in"
-              style={{
-                top: contextMenu.y + 2,
-                left: contextMenu.x + 2,
-                minWidth: 120,
-              }}
-              onClick={(e) => e.stopPropagation()}
-              onContextMenu={(e) => e.preventDefault()}
-            >
-              <button
-                className="block w-full px-4 py-2 text-left hover:bg-blue-700/25 text-sm text-zinc-200"
-                onClick={() => {
-                  setContextMenu((c) => ({ ...c, visible: false }));
-                  const newName = prompt("Rename to?", contextMenu.node!.name);
-                  if (newName && newName !== contextMenu.node!.name)
-                    renameNode(contextMenu.path!, newName);
-                }}
-              >
-                Rename
-              </button>
-              <button
-                className="block w-full px-4 py-2 text-left hover:bg-red-700/40 text-sm text-zinc-200"
-                onClick={() => {
-                  setContextMenu((c) => ({ ...c, visible: false }));
-                  if (window.confirm(`Delete "${contextMenu.node!.name}"?`))
-                    deleteNode(contextMenu.path!);
-                }}
-              >
-                Delete
-              </button>
             </div>
+          </div>
+
+          <button
+            className="rounded p-1 transition hover:bg-blue-700/40"
+            onClick={() => setNewFolderOpen(true)}
+            title="New Folder"
+          >
+            <FolderPlus size={15} />
+          </button>
+          {mode === "manage" && (
+            <button
+              className="rounded p-1 transition hover:bg-blue-700/40"
+              onClick={() => setNewFileOpen(true)}
+              title="New File"
+            >
+              <FilePlus2 size={15} />
+            </button>
           )}
         </div>
+
+        <div className="flex h-0 min-h-0 flex-1">
+          <div className="flex min-w-[90px] w-40 flex-col gap-1 border-r border-zinc-800 bg-gradient-to-b from-[#1a1d22] to-[#18191d] py-2">
+            {sidebarFolders.map((item) => (
+              <button
+                key={item.label}
+                className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-[14px] font-semibold text-zinc-200 transition hover:bg-blue-800/25 ${
+                  JSON.stringify(activePath) === JSON.stringify(item.path) ? "bg-blue-700/40 text-blue-100" : ""
+                }`}
+                onClick={() => setActivePath(item.path)}
+              >
+                {item.icon}
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative flex-1 overflow-auto bg-gradient-to-br from-[#1b1d22] to-[#171821] p-3">
+            {currentNode.type === "folder" && currentNode.children && currentNode.children.length === 0 && (
+              <div className="mt-16 text-center text-base text-zinc-500">This folder is empty.</div>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              {currentNode.type === "folder" &&
+                currentNode.children?.map((node) => (
+                  <NodeTile
+                    key={node.id}
+                    node={node}
+                    onOpen={() => openNode(node, [...activePath, node.name])}
+                    onContextMenu={(event) => {
+                      if (mode === "save") return;
+                      event.preventDefault();
+                      setContextMenu({
+                        visible: true,
+                        x: event.clientX,
+                        y: event.clientY,
+                        node,
+                        path: [...activePath, node.name],
+                      });
+                    }}
+                  />
+                ))}
+            </div>
+
+            {mode === "manage" && contextMenu.visible && contextMenu.path && contextMenu.node && (
+              <div
+                className="fixed z-50 min-w-[160px] rounded border border-zinc-700 bg-[#23242a] py-1 shadow-lg"
+                style={{ top: contextMenu.y + 2, left: contextMenu.x + 2 }}
+                onClick={(event) => event.stopPropagation()}
+                onContextMenu={(event) => event.preventDefault()}
+              >
+                <button
+                  className="block w-full px-4 py-2 text-left text-sm text-zinc-200 hover:bg-blue-700/25"
+                  onClick={() => {
+                    setContextMenu((state) => ({ ...state, visible: false }));
+                    openNode(contextMenu.node!, contextMenu.path!);
+                  }}
+                >
+                  Open
+                </button>
+                <button
+                  className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-zinc-200 hover:bg-blue-700/25"
+                  onClick={() => {
+                    setContextMenu((state) => ({ ...state, visible: false }));
+                    setRenameState({
+                      open: true,
+                      path: contextMenu.path,
+                      currentName: contextMenu.node!.name,
+                    });
+                  }}
+                >
+                  <Pencil size={14} /> Rename
+                </button>
+                <button
+                  className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-zinc-200 hover:bg-red-700/40"
+                  onClick={() => {
+                    setContextMenu((state) => ({ ...state, visible: false }));
+                    setDeleteState({
+                      open: true,
+                      path: contextMenu.path,
+                      targetName: contextMenu.node!.name,
+                    });
+                  }}
+                >
+                  <Trash2 size={14} /> Delete
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {mode === "save" && (
+          <div className="flex items-center gap-2 border-t border-zinc-800 bg-[#1b1f25] px-3 py-2">
+            <label className="text-xs text-zinc-400">File name</label>
+            <input
+              value={saveFileName}
+              onChange={(e) => setSaveFileName(e.target.value)}
+              className="flex-1 rounded border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
+              placeholder="Untitled.txt"
+            />
+            <button
+              type="button"
+              onClick={onCancel}
+              className="inline-flex items-center gap-1 rounded bg-zinc-700 px-2.5 py-1.5 text-xs hover:bg-zinc-600"
+            >
+              <X size={14} /> Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveClick}
+              className="inline-flex items-center gap-1 rounded bg-blue-600 px-2.5 py-1.5 text-xs font-semibold hover:bg-blue-700"
+            >
+              <Save size={14} /> Save
+            </button>
+          </div>
+        )}
       </div>
-    </div>
+
+      <PromptDialog
+        open={newFolderOpen}
+        title="New Folder"
+        label="Folder name"
+        placeholder="Folder"
+        confirmText="Create"
+        onCancel={() => setNewFolderOpen(false)}
+        onConfirm={(value) => {
+          if (!value) return;
+          createFolder(activePath, value);
+          setNewFolderOpen(false);
+          notify({ type: "success", message: `Folder "${value}" created` });
+        }}
+      />
+
+      <PromptDialog
+        open={newFileOpen}
+        title="New File"
+        label="File name"
+        placeholder="Untitled.txt"
+        confirmText="Create"
+        onCancel={() => setNewFileOpen(false)}
+        onConfirm={(value) => {
+          if (!value) return;
+          createFile(activePath, value, "");
+          setNewFileOpen(false);
+          notify({ type: "success", message: `File "${value}" created` });
+        }}
+      />
+
+      <PromptDialog
+        open={renameState.open}
+        title="Rename"
+        label="New name"
+        initialValue={renameState.currentName}
+        confirmText="Rename"
+        onCancel={() => setRenameState({ open: false, path: null, currentName: "" })}
+        onConfirm={(value) => {
+          if (!value || !renameState.path) return;
+          renameNode(renameState.path, value);
+          setRenameState({ open: false, path: null, currentName: "" });
+          notify({ type: "success", message: "Renamed successfully" });
+        }}
+      />
+
+      <ConfirmDialog
+        open={deleteState.open}
+        title="Delete"
+        message={`Delete "${deleteState.targetName}"?`}
+        confirmText="Delete"
+        danger
+        onCancel={() => setDeleteState({ open: false, path: null, targetName: "" })}
+        onConfirm={() => {
+          if (!deleteState.path) return;
+          deleteNode(deleteState.path);
+          setDeleteState({ open: false, path: null, targetName: "" });
+          notify({ type: "success", message: "Deleted successfully" });
+        }}
+      />
+    </>
   );
 }
 
-function Win11SquareNode({
+function NodeTile({
   node,
   onOpen,
   onContextMenu,
 }: {
   node: FileNode;
   onOpen: () => void;
-  onContextMenu: (e: React.MouseEvent) => void;
+  onContextMenu: (e: MouseEvent) => void;
 }) {
   return (
     <div
-      className="flex flex-col items-center justify-center gap-1 p-1 rounded hover:bg-blue-900/40 cursor-pointer group relative w-16 h-16 shadow transition-all duration-100 select-none"
+      className="group relative flex h-16 w-16 cursor-pointer flex-col items-center justify-center gap-1 rounded p-1 transition-all duration-100 hover:bg-blue-900/40"
       tabIndex={0}
-      style={{
-        userSelect: "none",
-        aspectRatio: "1 / 1",
-        borderRadius: 0,
-        border: "1px solid transparent",
-        background:
-          "linear-gradient(145deg,rgba(80,90,120,0.05) 0%,rgba(0,0,0,0.1) 100%)",
-      }}
       onDoubleClick={onOpen}
       onContextMenu={onContextMenu}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") onOpen();
+      }}
     >
-      <div className="w-7 h-7 flex items-center justify-center">
+      <div className="flex h-7 w-7 items-center justify-center">
         {node.type === "folder" ? (
-          <IconFolderFilled size={27} className="text-yellow-400 drop-shadow" />
+          <Folder size={24} className="text-yellow-400" />
         ) : (
-          <IconFile size={23} className="text-blue-400 drop-shadow" />
+          <FileIcon size={22} className="text-blue-400" />
         )}
       </div>
-      <span className="text-[11px] text-zinc-100 font-medium truncate w-14 text-center">
-        {node.name}
-      </span>
+      <span className="w-14 truncate text-center text-[11px] font-medium text-zinc-100">{node.name}</span>
     </div>
   );
 }
