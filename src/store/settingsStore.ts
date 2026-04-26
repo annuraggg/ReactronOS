@@ -11,23 +11,41 @@ export const BUILTIN_WALLPAPERS = [
 
 type UserSettings = {
   wallpaper: string;
+  theme: "dark" | "light";
+  accent: string;
 };
 
 type SettingsStore = {
   settingsByUser: Record<string, UserSettings>;
   currentWallpaper: string;
+  currentTheme: "dark" | "light";
+  currentAccent: string;
   loadForCurrentUser: () => void;
   setWallpaper: (wallpaper: string) => void;
+  setTheme: (theme: "dark" | "light") => void;
+  setAccent: (accent: string) => void;
 };
+
+const DEFAULT_THEME: "dark" | "light" = "dark";
+const DEFAULT_ACCENT = "#3b82f6";
+
+export function resolveWallpaper(value?: string | null): string {
+  if (!value || typeof value !== "string" || !value.trim()) return BUILTIN_WALLPAPERS[0];
+  return value;
+}
 
 function loadByUser(userId: string): UserSettings {
   try {
     const raw = localStorage.getItem(`${KEY_BASE}:${userId}`);
-    if (!raw) return { wallpaper: BUILTIN_WALLPAPERS[0] };
+    if (!raw) return { wallpaper: BUILTIN_WALLPAPERS[0], theme: DEFAULT_THEME, accent: DEFAULT_ACCENT };
     const parsed = JSON.parse(raw) as Partial<UserSettings>;
-    return { wallpaper: parsed.wallpaper || BUILTIN_WALLPAPERS[0] };
+    return {
+      wallpaper: resolveWallpaper(parsed.wallpaper),
+      theme: parsed.theme === "light" ? "light" : DEFAULT_THEME,
+      accent: typeof parsed.accent === "string" && parsed.accent ? parsed.accent : DEFAULT_ACCENT,
+    };
   } catch {
-    return { wallpaper: BUILTIN_WALLPAPERS[0] };
+    return { wallpaper: BUILTIN_WALLPAPERS[0], theme: DEFAULT_THEME, accent: DEFAULT_ACCENT };
   }
 }
 
@@ -42,26 +60,57 @@ function persistByUser(userId: string, settings: UserSettings) {
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
   settingsByUser: {},
   currentWallpaper: BUILTIN_WALLPAPERS[0],
+  currentTheme: DEFAULT_THEME,
+  currentAccent: DEFAULT_ACCENT,
   loadForCurrentUser: () => {
     const userId = getActiveUserId();
     if (!userId) {
-      set({ currentWallpaper: BUILTIN_WALLPAPERS[0] });
+      set({
+        currentWallpaper: BUILTIN_WALLPAPERS[0],
+        currentTheme: DEFAULT_THEME,
+        currentAccent: DEFAULT_ACCENT,
+      });
       return;
     }
     const existing = get().settingsByUser[userId] ?? loadByUser(userId);
     set((state) => ({
       settingsByUser: { ...state.settingsByUser, [userId]: existing },
       currentWallpaper: existing.wallpaper,
+      currentTheme: existing.theme,
+      currentAccent: existing.accent,
     }));
   },
   setWallpaper: (wallpaper) => {
     const userId = getActiveUserId();
     if (!userId) return;
-    const next = { wallpaper };
+    const current = get().settingsByUser[userId] ?? loadByUser(userId);
+    const next = { ...current, wallpaper: resolveWallpaper(wallpaper) };
     persistByUser(userId, next);
     set((state) => ({
       settingsByUser: { ...state.settingsByUser, [userId]: next },
-      currentWallpaper: wallpaper,
+      currentWallpaper: next.wallpaper,
+    }));
+  },
+  setTheme: (theme) => {
+    const userId = getActiveUserId();
+    if (!userId) return;
+    const current = get().settingsByUser[userId] ?? loadByUser(userId);
+    const next = { ...current, theme };
+    persistByUser(userId, next);
+    set((state) => ({
+      settingsByUser: { ...state.settingsByUser, [userId]: next },
+      currentTheme: next.theme,
+    }));
+  },
+  setAccent: (accent) => {
+    const userId = getActiveUserId();
+    if (!userId) return;
+    const current = get().settingsByUser[userId] ?? loadByUser(userId);
+    const next = { ...current, accent };
+    persistByUser(userId, next);
+    set((state) => ({
+      settingsByUser: { ...state.settingsByUser, [userId]: next },
+      currentAccent: next.accent,
     }));
   },
 }));

@@ -1,160 +1,170 @@
-    import { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 
-    export default function Doom() {
-    const dosRef = useRef<HTMLDivElement>(null);
-    const dosInstanceRef = useRef<any>(null);
+type DosFactory = (
+  canvas: HTMLCanvasElement,
+  options: { wdosboxUrl: string }
+) => Promise<DosInstance>;
 
-    const loadJsDos = (): Promise<any> => {
-        return new Promise((resolve, reject) => {
-        if ((window as any).Dos) {
-            resolve((window as any).Dos);
-            return;
+type DosInstance = {
+  fs: { extract: (path: string) => Promise<void> };
+  main: (args: string[]) => Promise<void>;
+  exit?: () => void;
+  terminate?: () => void;
+  close?: () => void;
+};
+
+type TrackedListener = {
+  target: Window | Document;
+  type: "keydown" | "keyup";
+  listener: EventListenerOrEventListenerObject;
+  options?: boolean | AddEventListenerOptions;
+};
+
+type DoomWindow = Window & { Dos?: DosFactory };
+
+export default function Doom() {
+  const dosRef = useRef<HTMLDivElement>(null);
+  const dosInstanceRef = useRef<DosInstance | null>(null);
+  const trackedListenersRef = useRef<TrackedListener[]>([]);
+  const lastActiveElementRef = useRef<HTMLElement | null>(null);
+
+  const loadJsDos = (): Promise<DosFactory> =>
+    new Promise((resolve, reject) => {
+      const doomWindow = window as DoomWindow;
+      if (doomWindow.Dos) {
+        resolve(doomWindow.Dos);
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.src = "https://js-dos.com/6.22/current/js-dos.js";
+      script.onload = () => {
+        if (doomWindow.Dos) resolve(doomWindow.Dos);
+        else reject(new Error("js-dos failed to load"));
+      };
+      script.onerror = () => reject(new Error("Failed to load js-dos script"));
+      document.head.appendChild(script);
+    });
+
+  useEffect(() => {
+    let cancelled = false;
+    const mountNode = dosRef.current;
+    const active = document.activeElement;
+    lastActiveElementRef.current = active instanceof HTMLElement ? active : null;
+
+    const originalWindowAdd = window.addEventListener.bind(window);
+    const originalDocumentAdd = document.addEventListener.bind(document);
+
+    const trackAndAdd =
+      (target: Window | Document, originalAdd: typeof window.addEventListener) =>
+      (
+        type: string,
+        listener: EventListenerOrEventListenerObject,
+        options?: boolean | AddEventListenerOptions
+      ) => {
+        if ((type === "keydown" || type === "keyup") && listener) {
+          trackedListenersRef.current.push({
+            target,
+            type,
+            listener,
+            options,
+          });
         }
+        originalAdd(type, listener, options);
+      };
 
-        const script = document.createElement("script");
-        script.src = "https://js-dos.com/6.22/current/js-dos.js";
-        script.onload = () => {
-            if ((window as any).Dos) {
-            resolve((window as any).Dos);
-            } else {
-            reject(new Error("js-dos failed to load"));
-            }
-        };
-        script.onerror = () => reject(new Error("Failed to load js-dos script"));
-        document.head.appendChild(script);
+    window.addEventListener = trackAndAdd(window, originalWindowAdd) as typeof window.addEventListener;
+    document.addEventListener = trackAndAdd(
+      document,
+      originalDocumentAdd as typeof window.addEventListener
+    ) as typeof document.addEventListener;
+
+    const initDoom = async () => {
+      if (!mountNode) return;
+
+      try {
+        const Dos = await loadJsDos();
+        if (cancelled) return;
+
+        const canvas = document.createElement("canvas");
+        canvas.style.imageRendering = "pixelated";
+        canvas.style.width = "100%";
+        canvas.style.height = "100%";
+        canvas.style.minHeight = "85vh";
+        mountNode.innerHTML = "";
+        mountNode.appendChild(canvas);
+
+        const dos = await Dos(canvas, {
+          wdosboxUrl: "https://js-dos.com/6.22/current/wdosbox.js",
         });
-    };
+        if (cancelled) return;
 
-    useEffect(() => {
-        const initDoom = async () => {
-        if (!dosRef.current) return;
+        dosInstanceRef.current = dos;
 
         try {
-            const Dos = await loadJsDos();
-
-            const canvas = document.createElement("canvas");
-            canvas.style.imageRendering = "pixelated";
-            canvas.style.width = "100%";
-            canvas.style.height = "100%";
-            canvas.style.minHeight = "85vh";
-            dosRef.current.innerHTML = "";
-            dosRef.current.appendChild(canvas);
-
-            const dos = await Dos(canvas, {
-            wdosboxUrl: "https://js-dos.com/6.22/current/wdosbox.js",
-            });
-
-            dosInstanceRef.current = dos;
-
-            try {
-            await dos.fs.extract("/apps/doom/doom.jsdos");
-
-            let executed = false;
-
-            try {
-                await dos.main(["DOOM.EXE"]);
-                executed = true;
-                console.log("Successfully started DOOM");
-            } catch (e) {
-                console.log(`Failed to run DOOM:`, e);
-            }
-
-            if (executed) return;
-            } catch (e) {
-            console.log("No .jsdos bundle found, trying zip method:", e);
-            }
-
-            try {
-            await dos.fs.extract("/apps/doom/doom.zip");
-            let executed = false;
-
-            try {
-                await dos.main(["DOOM.EXE"]);
-                executed = true;
-                console.log("Successfully started DOOM");
-            } catch (e) {
-                console.log(`Failed to run DOOM:`, e);
-            }
-
-            if (!executed) {
-                throw new Error("Could not find or execute DOOM executable");
-            }
-            } catch (zipError) {
-            console.error("Zip method failed:", zipError);
-            throw zipError;
-            }
-        } catch (error) {
-            console.error("Failed to initialize DOOM:", error);
-
-            if (dosRef.current) {
-            dosRef.current.innerHTML = `
-                <div style="color: #ff6b6b; text-align: center; padding: 40px; font-family: 'Courier New', monospace; background: #1a1a1a; border: 2px solid #333; border-radius: 8px; margin: 20px;">
-                <h2 style="color: #ff4757; margin-bottom: 20px; font-size: 24px;">⚠️ DOOM Loading Failed</h2>
-                <div style="text-align: left; max-width: 600px; margin: 0 auto;">
-                    <p style="margin-bottom: 15px; color: #ffa502;"><strong>Error:</strong> ${
-                    error instanceof Error ? error.message : "Unknown error"
-                    }</p>
-                    
-                    <h3 style="color: #26de81; margin-top: 30px; margin-bottom: 15px;">📁 Required Files:</h3>
-                    <p style="margin-bottom: 10px;">Place DOOM game files in your <code style="background: #2c2c2c; padding: 2px 6px; border-radius: 3px;">/public/apps/doom/</code> directory:</p>
-                    <ul style="text-align: left; margin-left: 20px; line-height: 1.6;">
-                    <li><strong>Option 1:</strong> <code style="background: #2c2c2c; padding: 2px 6px; border-radius: 3px;">doom.jsdos</code> (pre-built bundle)</li>
-                    <li><strong>Option 2:</strong> <code style="background: #2c2c2c; padding: 2px 6px; border-radius: 3px;">doom.zip</code> containing:
-                        <ul style="margin-left: 20px; margin-top: 5px;">
-                        <li><code>doom.exe</code> or <code>DOOM.EXE</code></li>
-                        <li><code>doom.wad</code> or <code>DOOM1.WAD</code></li>
-                        <li>Other game files</li>
-                        </ul>
-                    </li>
-                    </ul>
-                    
-                    <h3 style="color: #26de81; margin-top: 30px; margin-bottom: 15px;">🎮 Getting DOOM Files:</h3>
-                    <ul style="text-align: left; margin-left: 20px; line-height: 1.6;">
-                    <li>Use the shareware version (DOOM1.WAD)</li>
-                    <li>Extract from your legally owned copy</li>
-                    <li>Create a .jsdos bundle using js-dos tools</li>
-                    </ul>
-                    
-                    <div style="margin-top: 30px; padding: 15px; background: #2c2c2c; border-radius: 5px;">
-                    <p style="margin: 0; color: #ffa502;"><strong>Note:</strong> This emulator loads local files only. Make sure the files are accessible from your web server.</p>
-                    </div>
-                </div>
-                </div>
-            `;
-            }
+          await dos.fs.extract("/apps/doom/doom.jsdos");
+          await dos.main(["DOOM.EXE"]);
+          return;
+        } catch {
+          // fallback to zip bundle
         }
-        };
 
-        initDoom();
+        await dos.fs.extract("/apps/doom/doom.zip");
+        await dos.main(["DOOM.EXE"]);
+      } catch (error) {
+        if (!mountNode) return;
+        mountNode.innerHTML = `
+          <div style="color:#ff6b6b;text-align:center;padding:40px;font-family:'Courier New',monospace;background:#1a1a1a;border:2px solid #333;border-radius:8px;margin:20px;">
+            <h2 style="color:#ff4757;margin-bottom:20px;font-size:24px;">⚠️ DOOM Loading Failed</h2>
+            <p style="margin-bottom:12px;color:#ffa502;"><strong>Error:</strong> ${
+              error instanceof Error ? error.message : "Unknown error"
+            }</p>
+            <p>Place <code>doom.jsdos</code> or <code>doom.zip</code> under <code>/public/apps/doom/</code>.</p>
+          </div>
+        `;
+      } finally {
+        window.addEventListener = originalWindowAdd;
+        document.addEventListener = originalDocumentAdd;
+      }
+    };
 
-        return () => {
-        if (dosInstanceRef.current) {
-            try {
-            if (typeof dosInstanceRef.current.exit === "function") {
-                dosInstanceRef.current.exit();
-                console.log("DOS instance exited via exit().");
-            } else if (typeof dosInstanceRef.current.terminate === "function") {
-                dosInstanceRef.current.terminate();
-                console.log("DOS instance terminated via terminate().");
-            } else if (typeof dosInstanceRef.current.close === "function") {
-                dosInstanceRef.current.close();
-                console.log("DOS instance closed via close().");
-            } else {
-                console.log("No cleanup method found, clearing reference.");
-            }
+    void initDoom();
 
-            dosInstanceRef.current = null;
-            if (dosRef.current) dosRef.current.innerHTML = "";
-            } catch (e) {
-            console.log("Error during cleanup:", e);
-            dosInstanceRef.current = null;
-            if (dosRef.current) dosRef.current.innerHTML = "";
-            }
-        }
-        };
-    }, []);
+    return () => {
+      cancelled = true;
+      window.addEventListener = originalWindowAdd;
+      document.addEventListener = originalDocumentAdd;
 
-    return (
-        <div ref={dosRef} className="flex items-center justify-center" />
-    );
-    }
+      for (const entry of trackedListenersRef.current) {
+        entry.target.removeEventListener(entry.type, entry.listener, entry.options);
+      }
+      trackedListenersRef.current = [];
+
+      if (document.pointerLockElement) {
+        document.exitPointerLock?.();
+      }
+      if (document.fullscreenElement) {
+        void document.exitFullscreen?.().catch(() => undefined);
+      }
+
+      const instance = dosInstanceRef.current;
+      if (instance) {
+        if (typeof instance.exit === "function") instance.exit();
+        else if (typeof instance.terminate === "function") instance.terminate();
+        else if (typeof instance.close === "function") instance.close();
+      }
+      dosInstanceRef.current = null;
+      if (mountNode) mountNode.innerHTML = "";
+
+      const restoreTarget =
+        lastActiveElementRef.current && document.contains(lastActiveElementRef.current)
+          ? lastActiveElementRef.current
+          : (document.querySelector("input, textarea, [contenteditable='true']") as HTMLElement | null);
+      window.requestAnimationFrame(() => {
+        restoreTarget?.focus();
+      });
+    };
+  }, []);
+
+  return <div ref={dosRef} className="flex items-center justify-center" />;
+}

@@ -169,9 +169,17 @@ const useWindowStore = create<WindowStore>((set, get) => ({
 
   closeWindow: (id) => {
     set((state) => {
+      const closingWindow = state.windows.find((w) => w.id === id);
       const updated = state.windows.filter((w) => w.id !== id);
-      saveSystemState({ windows: serializeWindows(updated) });
-      return { windows: updated };
+      let nextWindows = updated;
+
+      if (closingWindow?.isFocused && updated.length > 0) {
+        const topWindow = [...updated].sort((a, b) => (b.zIndex || 0) - (a.zIndex || 0))[0];
+        nextWindows = updated.map((w) => ({ ...w, isFocused: w.id === topWindow.id }));
+      }
+
+      saveSystemState({ windows: serializeWindows(nextWindows) });
+      return { windows: nextWindows };
     });
   },
 

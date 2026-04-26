@@ -70,6 +70,8 @@ const App = () => {
   const currentUser = useAuthStore((state) => state.currentUser);
   const loadFsForCurrentUser = useFileSystemStore((state) => state.loadForCurrentUser);
   const loadSettingsForCurrentUser = useSettingsStore((state) => state.loadForCurrentUser);
+  const currentTheme = useSettingsStore((state) => state.currentTheme);
+  const currentAccent = useSettingsStore((state) => state.currentAccent);
   const windows = useWindowStore((state) => state.windows);
   const {
     addWindow,
@@ -179,6 +181,11 @@ const App = () => {
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = currentTheme;
+    document.documentElement.style.setProperty("--accent-color", currentAccent);
+  }, [currentAccent, currentTheme]);
 
   if (!currentUser) {
     return <AuthScreen />;

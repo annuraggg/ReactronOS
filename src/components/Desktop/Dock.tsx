@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Folder, NotebookText } from "lucide-react";
 import useWindowStore, { type Window } from "../../store/windowStore";
 import { createNotepadWindow } from "../../apps/Notepad/Notepad";
@@ -44,6 +44,7 @@ const Dock = () => {
     top: number;
   } | null>(null);
   const logout = useAuthStore((s) => s.logout);
+  const startButtonRef = useRef<HTMLButtonElement>(null);
 
   const handleNotepadClick = () => {
     const group = windows.filter((w) => getAppType(w) === "notepad");
@@ -135,14 +136,15 @@ const Dock = () => {
         {dockApps.map((app) => {
           if (app.appType === "start")
             return (
-              <DockItem
-                key="start"
-                icon={app.icon}
-                label={app.label}
-                hasIndicator={false}
-                onClick={() => setStartMenuOpen((v) => !v)}
-              />
-            );
+                <DockItem
+                  key="start"
+                  icon={app.icon}
+                  label={app.label}
+                  hasIndicator={false}
+                  onClick={() => setStartMenuOpen((v) => !v)}
+                  buttonRef={startButtonRef}
+                />
+              );
 
           const onClick =
             app.appType === "explorer"
@@ -223,6 +225,7 @@ const Dock = () => {
         onClose={() => setStartMenuOpen(false)}
         userName={useAuthStore.getState().currentUser ?? "User"}
         onLogout={logout}
+        ignoreRefs={[startButtonRef]}
       />
     </div>
   );
@@ -235,6 +238,7 @@ const DockItem = ({
   hasIndicator = false,
   isFocused = false,
   isMinimized = false,
+  buttonRef,
 }: {
   icon: string | ReactNode;
   label: string;
@@ -242,10 +246,13 @@ const DockItem = ({
   hasIndicator?: boolean;
   isFocused?: boolean;
   isMinimized?: boolean;
+  buttonRef?: RefObject<HTMLButtonElement | null>;
 }) => {
   return (
     <div className="relative">
-      <div
+      <button
+        ref={buttonRef}
+        type="button"
         className="flex flex-col items-center justify-center hover:bg-zinc-700 p-1 w-10 h-10 rounded-lg transition-colors cursor-pointer"
         onClick={onClick}
         title={label}
@@ -255,7 +262,7 @@ const DockItem = ({
         ) : (
           icon
         )}
-      </div>
+      </button>
       {hasIndicator && (
         <div className="absolute -bottom-0.5 left-1/2 transform -translate-x-1/2">
           <div

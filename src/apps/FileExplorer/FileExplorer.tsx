@@ -1,7 +1,9 @@
 import { type MouseEvent, useEffect, useMemo, useState } from "react";
 import {
+  ClipboardPaste,
   ChevronLeft,
   ChevronRight,
+  Copy,
   File as FileIcon,
   FilePlus2,
   Folder,
@@ -9,9 +11,11 @@ import {
   Home,
   Pencil,
   RefreshCw,
+  Save,
+  Scissors,
+  Search,
   Trash2,
   X,
-  Save,
 } from "lucide-react";
 import { launchAppForFile } from "../../utils/launchAppForFile";
 import useWindowStore from "../../store/windowStore";
@@ -52,8 +56,21 @@ export default function FileExplorer({
   onSave,
   onCancel,
 }: FileExplorerProps) {
-  const { root, currentPath, setCurrentPath, getNodeByPath, createFile, createFolder, renameNode, deleteNode } =
-    useFileSystemStore();
+  const {
+    root,
+    currentPath,
+    setCurrentPath,
+    getNodeByPath,
+    createFile,
+    createFolder,
+    renameNode,
+    deleteNode,
+    moveNode,
+    clipboard,
+    copyNode,
+    cutNode,
+    pasteClipboard,
+  } = useFileSystemStore();
   const addWindow = useWindowStore((state) => state.addWindow);
 
   const defaultSavePath = initialPath && initialPath.length > 0 ? initialPath : DEFAULT_SAVE_PATH;
@@ -71,6 +88,8 @@ export default function FileExplorer({
     node: FileNode | null;
     path: string[] | null;
   }>({ visible: false, x: 0, y: 0, node: null, path: null });
+  const [searchTerm, setSearchTerm] = useState("");
+  const [draggingPath, setDraggingPath] = useState<string[] | null>(null);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFileOpen, setNewFileOpen] = useState(false);
   const [renameState, setRenameState] = useState<RenameState>({
@@ -123,6 +142,12 @@ export default function FileExplorer({
   useEffect(() => setSaveFileName(suggestedFileName), [suggestedFileName]);
 
   const currentNode = getNodeByPath(activePath) || root;
+  const visibleChildren =
+    currentNode.type === "folder"
+      ? (currentNode.children || []).filter((child) =>
+          child.name.toLowerCase().includes(searchTerm.trim().toLowerCase())
+        )
+      : [];
   const crumbs = getPathCrumbs(activePath);
 
   const sidebarFolders = [
@@ -218,6 +243,15 @@ export default function FileExplorer({
               ))}
             </div>
           </div>
+          <div className="mr-1 flex w-44 items-center gap-1 rounded border border-zinc-700 bg-zinc-800/80 px-2 py-1">
+            <Search size={13} className="text-zinc-400" />
+            <input
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search"
+              className="w-full bg-transparent text-xs text-zinc-200 outline-none placeholder:text-zinc-500"
+            />
+          </div>
 
           <button
             className="rounded p-1 transition hover:bg-blue-700/40"
@@ -253,18 +287,41 @@ export default function FileExplorer({
             ))}
           </div>
 
-          <div className="relative flex-1 overflow-auto bg-gradient-to-br from-[#1b1d22] to-[#171821] p-3">
+          <div
+            className="relative flex-1 overflow-auto bg-gradient-to-br from-[#1b1d22] to-[#171821] p-3"
+            onContextMenu={(event) => {
+              if (mode === "save") return;
+              event.preventDefault();
+              setContextMenu({
+                visible: true,
+                x: event.clientX,
+                y: event.clientY,
+                node: null,
+                path: activePath,
+              });
+            }}
+          >
             {currentNode.type === "folder" && currentNode.children && currentNode.children.length === 0 && (
               <div className="mt-16 text-center text-base text-zinc-500">This folder is empty.</div>
+            )}
+            {searchTerm && visibleChildren.length === 0 && (
+              <div className="mt-16 text-center text-sm text-zinc-500">No files match “{searchTerm}”.</div>
             )}
 
             <div className="flex flex-wrap gap-2">
               {currentNode.type === "folder" &&
-                currentNode.children?.map((node) => (
+                visibleChildren.map((node) => (
                   <NodeTile
                     key={node.id}
                     node={node}
                     onOpen={() => openNode(node, [...activePath, node.name])}
+                    onDragStart={() => setDraggingPath([...activePath, node.name])}
+                    onDropOnFolder={() => {
+                      if (!draggingPath || node.type !== "folder") return;
+                      moveNode(draggingPath, [...activePath, node.name]);
+                      setDraggingPath(null);
+                    }}
+                    onDragEnd={() => setDraggingPath(null)}
                     onContextMenu={(event) => {
                       if (mode === "save") return;
                       event.preventDefault();
@@ -280,47 +337,105 @@ export default function FileExplorer({
                 ))}
             </div>
 
-            {mode === "manage" && contextMenu.visible && contextMenu.path && contextMenu.node && (
+            {mode === "manage" && contextMenu.visible && contextMenu.path && (
               <div
                 className="fixed z-50 min-w-[160px] rounded border border-zinc-700 bg-[#23242a] py-1 shadow-lg"
                 style={{ top: contextMenu.y + 2, left: contextMenu.x + 2 }}
                 onClick={(event) => event.stopPropagation()}
                 onContextMenu={(event) => event.preventDefault()}
               >
-                <button
-                  className="block w-full px-4 py-2 text-left text-sm text-zinc-200 hover:bg-blue-700/25"
-                  onClick={() => {
-                    setContextMenu((state) => ({ ...state, visible: false }));
-                    openNode(contextMenu.node!, contextMenu.path!);
-                  }}
-                >
-                  Open
-                </button>
+                {contextMenu.node && (
+                  <button
+                    className="block w-full px-4 py-2 text-left text-sm text-zinc-200 hover:bg-blue-700/25"
+                    onClick={() => {
+                      setContextMenu((state) => ({ ...state, visible: false }));
+                      openNode(contextMenu.node!, contextMenu.path!);
+                    }}
+                  >
+                    Open
+                  </button>
+                )}
                 <button
                   className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-zinc-200 hover:bg-blue-700/25"
                   onClick={() => {
+                    if (!contextMenu.node) return;
                     setContextMenu((state) => ({ ...state, visible: false }));
                     setRenameState({
                       open: true,
                       path: contextMenu.path,
-                      currentName: contextMenu.node!.name,
+                      currentName: contextMenu.node.name,
                     });
                   }}
+                  disabled={!contextMenu.node}
                 >
                   <Pencil size={14} /> Rename
                 </button>
                 <button
                   className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-zinc-200 hover:bg-red-700/40"
                   onClick={() => {
+                    if (!contextMenu.node) return;
                     setContextMenu((state) => ({ ...state, visible: false }));
                     setDeleteState({
                       open: true,
                       path: contextMenu.path,
-                      targetName: contextMenu.node!.name,
+                      targetName: contextMenu.node.name,
                     });
                   }}
+                  disabled={!contextMenu.node}
                 >
                   <Trash2 size={14} /> Delete
+                </button>
+                <button
+                  className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-zinc-200 hover:bg-blue-700/25"
+                  onClick={() => {
+                    if (!contextMenu.node) return;
+                    copyNode(contextMenu.path!);
+                    setContextMenu((state) => ({ ...state, visible: false }));
+                    notify({ type: "info", message: `"${contextMenu.node.name}" copied` });
+                  }}
+                  disabled={!contextMenu.node}
+                >
+                  <Copy size={14} /> Copy
+                </button>
+                <button
+                  className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-zinc-200 hover:bg-blue-700/25"
+                  onClick={() => {
+                    if (!contextMenu.node) return;
+                    cutNode(contextMenu.path!);
+                    setContextMenu((state) => ({ ...state, visible: false }));
+                    notify({ type: "info", message: `"${contextMenu.node.name}" cut` });
+                  }}
+                  disabled={!contextMenu.node}
+                >
+                  <Scissors size={14} /> Cut
+                </button>
+                <button
+                  className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-zinc-200 hover:bg-blue-700/25"
+                  onClick={() => {
+                    const targetPath =
+                      contextMenu.node?.type === "folder"
+                        ? contextMenu.path!
+                        : contextMenu.path!.slice(0, -1);
+                    const result = pasteClipboard(targetPath);
+                    setContextMenu((state) => ({ ...state, visible: false }));
+                    if (!result.ok) {
+                      notify({ type: "error", message: result.error || "Paste failed" });
+                      return;
+                    }
+                    notify({ type: "success", message: "Pasted successfully" });
+                  }}
+                  disabled={!clipboard}
+                >
+                  <ClipboardPaste size={14} /> Paste
+                </button>
+                <button
+                  className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-zinc-200 hover:bg-blue-700/25"
+                  onClick={() => {
+                    setContextMenu((state) => ({ ...state, visible: false }));
+                    setNewFolderOpen(true);
+                  }}
+                >
+                  <FolderPlus size={14} /> New Folder
                 </button>
               </div>
             )}
@@ -421,15 +536,32 @@ function NodeTile({
   node,
   onOpen,
   onContextMenu,
+  onDragStart,
+  onDropOnFolder,
+  onDragEnd,
 }: {
   node: FileNode;
   onOpen: () => void;
   onContextMenu: (e: MouseEvent) => void;
+  onDragStart: () => void;
+  onDropOnFolder: () => void;
+  onDragEnd: () => void;
 }) {
   return (
     <div
       className="group relative flex h-16 w-16 cursor-pointer flex-col items-center justify-center gap-1 rounded p-1 transition-all duration-100 hover:bg-blue-900/40"
       tabIndex={0}
+      draggable
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={(event) => {
+        if (node.type === "folder") event.preventDefault();
+      }}
+      onDrop={(event) => {
+        if (node.type !== "folder") return;
+        event.preventDefault();
+        onDropOnFolder();
+      }}
       onDoubleClick={onOpen}
       onContextMenu={onContextMenu}
       onKeyDown={(e) => {

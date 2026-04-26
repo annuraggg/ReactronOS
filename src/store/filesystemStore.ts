@@ -28,6 +28,7 @@ type FileSystemStore = {
   currentUserId: string | null;
   root: FileNode;
   currentPath: string[];
+  clipboard: { path: string[]; mode: "copy" | "cut" } | null;
   loadForCurrentUser: () => void;
   setCurrentPath: (path: string[]) => void;
   getNodeByPath: (path: string[]) => FileNode | null;
@@ -36,6 +37,10 @@ type FileSystemStore = {
   renameNode: (path: string[], newName: string) => void;
   deleteNode: (path: string[]) => void;
   moveNode: (fromPath: string[], toPath: string[]) => void;
+  copyNode: (path: string[]) => void;
+  cutNode: (path: string[]) => void;
+  clearClipboard: () => void;
+  pasteClipboard: (toPath: string[]) => { ok: boolean; error?: string };
   updateFileContent: (path: string[], content: string) => void;
 };
 
@@ -133,6 +138,34 @@ function inferFileType(name: string): string | undefined {
   return ext;
 }
 
+function isPathEqual(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((segment, idx) => segment === b[idx]);
+}
+
+function isPathPrefix(prefix: string[], path: string[]): boolean {
+  if (prefix.length > path.length) return false;
+  return prefix.every((segment, idx) => path[idx] === segment);
+}
+
+function cloneNodeWithFreshIds(node: FileNode): FileNode {
+  const now = nowIso();
+  if (node.type === "file") {
+    return {
+      ...node,
+      id: uuid(),
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+  return {
+    ...node,
+    id: uuid(),
+    createdAt: now,
+    updatedAt: now,
+    children: (node.children || []).map((child) => cloneNodeWithFreshIds(child)),
+  };
+}
+
 function readPersistedFs(): VirtualFileSystem {
   const { fileSystem } = loadSystemState();
   if (
@@ -166,6 +199,7 @@ export const useFileSystemStore = create<FileSystemStore>((set, get) => ({
   currentUserId: initialUser,
   root: initialRoot,
   currentPath: [],
+  clipboard: null,
   loadForCurrentUser: () => {
     const userId = getActiveUserId();
     if (!userId) {
@@ -173,6 +207,7 @@ export const useFileSystemStore = create<FileSystemStore>((set, get) => ({
         currentUserId: null,
         currentPath: [],
         root: createDefaultRoot(),
+        clipboard: null,
       });
       return;
     }
@@ -184,6 +219,7 @@ export const useFileSystemStore = create<FileSystemStore>((set, get) => ({
       fileSystem,
       root,
       currentPath: ["Desktop"],
+      clipboard: null,
     });
   },
   setCurrentPath: (path) => set({ currentPath: path }),
@@ -279,6 +315,8 @@ export const useFileSystemStore = create<FileSystemStore>((set, get) => ({
   moveNode: (fromPath, toPath) => {
     set((state) => {
       if (!state.currentUserId || fromPath.length === 0) return {};
+      if (isPathEqual(fromPath.slice(0, -1), toPath)) return {};
+      if (isPathPrefix(fromPath, toPath)) return {};
       const nextFs = structuredClone(state.fileSystem);
       const root = ensureUserRoot(nextFs, state.currentUserId);
       const sourceParentInfo = findParent(root, fromPath);
@@ -286,16 +324,99 @@ export const useFileSystemStore = create<FileSystemStore>((set, get) => ({
       const [sourceParent, sourceName] = sourceParentInfo;
       const targetFolder = findNode(root, toPath);
       if (!isFolderNode(targetFolder)) return {};
+      const sourceNode = (sourceParent.children || []).find((child) => child.name === sourceName);
+      if (!sourceNode) return {};
+      if (targetFolder.children?.some((child) => child.name === sourceNode.name)) return {};
       const sourceIndex = (sourceParent.children || []).findIndex((child) => child.name === sourceName);
       if (sourceIndex < 0) return {};
       const [node] = (sourceParent.children || []).splice(sourceIndex, 1);
-      if (targetFolder.children?.some((child) => child.name === node.name)) return {};
       targetFolder.children = [...(targetFolder.children || []), node];
       sourceParent.updatedAt = nowIso();
       targetFolder.updatedAt = nowIso();
       persistFs(nextFs);
       return { fileSystem: nextFs, root };
     });
+  },
+
+  copyNode: (path) => set({ clipboard: { path: [...path], mode: "copy" } }),
+
+  cutNode: (path) => set({ clipboard: { path: [...path], mode: "cut" } }),
+
+  clearClipboard: () => set({ clipboard: null }),
+
+  pasteClipboard: (toPath) => {
+    let result: { ok: boolean; error?: string } = { ok: false, error: "Nothing to paste." };
+
+    set((state) => {
+      if (!state.currentUserId) {
+        result = { ok: false, error: "No active user." };
+        return {};
+      }
+      if (!state.clipboard) {
+        result = { ok: false, error: "Clipboard is empty." };
+        return {};
+      }
+
+      const { path: fromPath, mode } = state.clipboard;
+      const sourceParentPath = fromPath.slice(0, -1);
+
+      if (isPathEqual(sourceParentPath, toPath)) {
+        result = { ok: false, error: "Cannot paste into the same location without renaming." };
+        return {};
+      }
+
+      if (isPathPrefix(fromPath, toPath)) {
+        result = { ok: false, error: "Cannot paste a folder into itself." };
+        return {};
+      }
+
+      const nextFs = structuredClone(state.fileSystem);
+      const root = ensureUserRoot(nextFs, state.currentUserId);
+      const sourceNode = findNode(root, fromPath);
+      const targetFolder = findNode(root, toPath);
+
+      if (!sourceNode) {
+        result = { ok: false, error: "Source item no longer exists." };
+        return {};
+      }
+      if (!isFolderNode(targetFolder)) {
+        result = { ok: false, error: "Target location is invalid." };
+        return {};
+      }
+      if (targetFolder.children?.some((child) => child.name === sourceNode.name)) {
+        result = { ok: false, error: `An item named "${sourceNode.name}" already exists here.` };
+        return {};
+      }
+
+      if (mode === "copy") {
+        targetFolder.children = [...(targetFolder.children || []), cloneNodeWithFreshIds(sourceNode)];
+        targetFolder.updatedAt = nowIso();
+        persistFs(nextFs);
+        result = { ok: true };
+        return { fileSystem: nextFs, root };
+      }
+
+      const sourceParentInfo = findParent(root, fromPath);
+      if (!sourceParentInfo) {
+        result = { ok: false, error: "Source parent is invalid." };
+        return {};
+      }
+      const [sourceParent, sourceName] = sourceParentInfo;
+      const sourceIndex = (sourceParent.children || []).findIndex((child) => child.name === sourceName);
+      if (sourceIndex < 0) {
+        result = { ok: false, error: "Source item no longer exists." };
+        return {};
+      }
+      const [nodeToMove] = (sourceParent.children || []).splice(sourceIndex, 1);
+      targetFolder.children = [...(targetFolder.children || []), nodeToMove];
+      sourceParent.updatedAt = nowIso();
+      targetFolder.updatedAt = nowIso();
+      persistFs(nextFs);
+      result = { ok: true };
+      return { fileSystem: nextFs, root, clipboard: null };
+    });
+
+    return result;
   },
 
   updateFileContent: (path, content) => {

@@ -10,14 +10,21 @@ type StartMenuProps = {
   onClose: () => void;
   userName?: string;
   onLogout?: () => void;
+  ignoreRefs?: Array<React.RefObject<HTMLElement | null>>;
 };
 
-export default function StartMenu({ visible, onClose, userName, onLogout }: StartMenuProps) {
+export default function StartMenu({
+  visible,
+  onClose,
+  userName,
+  onLogout,
+  ignoreRefs = [],
+}: StartMenuProps) {
   const [search, setSearch] = useState("");
   const addWindow = useWindowStore((state) => state.addWindow);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  useClickOutside(menuRef, onClose, visible);
+  useClickOutside(menuRef, onClose, visible, ignoreRefs);
 
   const filteredApps = useMemo(
     () =>
@@ -49,14 +56,14 @@ export default function StartMenu({ visible, onClose, userName, onLogout }: Star
             />
           </div>
 
-          <div className="flex-1 content-start flex-wrap gap-x-7 gap-y-5 overflow-y-auto px-8 pb-2 pt-8">
+          <div className="grid flex-1 content-start grid-cols-2 gap-4 overflow-y-auto px-8 pb-4 pt-6 sm:grid-cols-3 lg:grid-cols-4">
             {filteredApps.length === 0 && (
-              <div className="w-full py-10 text-center text-base text-zinc-400">No apps found</div>
+              <div className="col-span-full py-10 text-center text-base text-zinc-400">No apps found</div>
             )}
             {filteredApps.map((app) => (
               <button
                 key={app.id}
-                className="flex h-20 w-20 flex-col items-center justify-center gap-2 rounded-xl border border-transparent transition-all hover:border-zinc-600 hover:bg-zinc-800/70 active:bg-zinc-700/80"
+                className="flex h-24 w-full flex-col items-center justify-center gap-2 rounded-xl border border-transparent px-1 transition-all hover:border-zinc-600 hover:bg-zinc-800/70 active:bg-zinc-700/80"
                 onClick={() => {
                   onClose();
                   app.launch(addWindow);
